@@ -1,5 +1,9 @@
 /**
- * Handles the top level Discussions for a wiki.
+ * Handles individual posts on Discussions sites. 
+ * The Discussions API for Posts is a bit weird and should only be used to 
+ * create posts/replies. Fetching content should be done using 
+ * {@link Disco.Thread}.
+ * Use this API when creating a new thread.
  */
 (function(window) {
     if (window.Disco && window.Disco.Site) return;
@@ -20,17 +24,18 @@
     }
 
     /**
-     * Get post contents and information.
+     * Get post contents and other information.
      */
-    Post.prototype.get = function(cb) {
+    Post.prototype.get = function() {
         var self = this;
-        return util.fetch([this.siteId, 'posts', this.postId], 'get', {
+        return util.fetch(['discussion', this.siteId, 'posts', this.postId], 'get', {
             responseGroup: 'full',
             viewableOnly: this.showDeleted
         })
+        .then(function(res) { return res.json(); })
         .then(function(data) {
             return util.resolve(self.fromJSON(data));
-        }).done(cb);
+        });
     };
 
     Post.prototype.fromJSON = function(data) {

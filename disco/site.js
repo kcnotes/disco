@@ -48,25 +48,82 @@
      * @param {string} options.sortKey - @see Disco.util.SORT_KEY
      * @param {string} options.responseGroup - 'small' or 'full' post details
      */
-    Site.prototype.listPosts = function(options, cb) {
+    Site.prototype.listPosts = function(options) {
         options = options || {};
         options.viewableOnly = this.showDeleted;
-        return util.fetch([this.siteId, 'posts'], 'get', options, {
-            xhrFields: {
-                withCredentials: true
-            }
-        })
-        .then(function(data) {
-            return util.resolve(data);
-        }).done(cb);
+        return util.fetch(['discussion', this.siteId, 'posts'], 'GET', options)
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                return util.resolve(data);
+            });
     };
-    Site.prototype.listCategories = function() {};
+
+    /**
+     * Gets a list of new or hot threads.
+     * @param {Object} options - view options for the list of posts
+     * @param {number} options.limit - number of results to return, default 10
+     * @param {number} options.page - the pagination position, default 0
+     * @param {string} options.pivot - id of the post to pivot from
+     * @param {string} options.forumId - filter to certain forums
+     * @param {string} options.excludedThreads - threads to exclude
+     * @param {string} options.since - date since
+     * @param {string} options.until - date until
+     * @param {string} options.reported - show reported posts?
+     * @param {string} options.sortKey - @see Disco.util.SORT_KEY
+     * @param {string} options.responseGroup - 'small' or 'full' post details
+     */
+    Site.prototype.listThreads = function (options) {
+        options = options || {};
+        options.viewableOnly = this.showDeleted;
+        return util.fetch(['discussion', this.siteId, 'threads'], 'GET', options)
+            .then(function (res) {
+                return res.json();
+            })
+            .then(function (data) {
+                return util.resolve(data);
+            });
+    };
+
+    /**
+     * Get a list of categories (forum boards) on Discussions.
+     * @param {Object} options - view options for the list of posts
+     * @param {string} options.responseGroup - 'small' or 'full' post details
+     */
+    Site.prototype.listCategories = function (options) {
+        options = options || {};
+        options.viewableOnly = this.showDeleted;
+        return util.fetch(['discussion', this.siteId, 'forums'], 'GET', options)
+            .then(function (res) {
+                return res.json();
+            })
+            .then(function (data) {
+                return util.resolve(data);
+            });
+    };
     Site.prototype.getInsights = function() {};
     Site.prototype.getGuidelines = function() {};
     Site.prototype.setGuidelines = function() {};
     Site.prototype.getAttributes = function() {};
     Site.prototype.getAttribute = function() {};
     Site.prototype.setAttribute = function () {};
+
+    /**
+     * Get information about a list of users
+     * @param {Array<string>} userIds - array of user IDs to look up
+     */
+    Site.prototype.getUsers = function (userIds) {
+        var path = ['user-attribute', 'user', 'bulk'];
+        var userIds = userIds.map(function (id) {
+            return 'id=' + id;
+        })
+        return util.fetch(path, 'GET', userIds.join('&'))
+            .then(function (res) {
+                return res.json();
+            })
+            .then(function (data) {
+                return util.resolve(data);
+            });
+    };
 
     if (!window.Disco) window.Disco = {};
     window.Disco.Site = Site;
