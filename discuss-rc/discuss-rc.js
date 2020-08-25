@@ -14,18 +14,21 @@
     
     var templates = {};
     
-    templates.groupedPosts = 
-        '<div id="posts">' +
-            '{{#data._embedded.doc:posts}}' +
-                '<li><span class="mw-changeslist-line-inner">()' +
+    // Ungrouped single post RC entry
+    templates.post = 
+        '{{#post}}' +
+            '<li data-mw-ts="{{parsedDate.mwformat}}" class="fandom-discussrc-entry">' +
+                '<span class="mw-changeslist-line-inner">' + 
+                    // '()' +
+                    // ' <span class="mw-changeslist-separator"></span> ' +
+                    // '&lrm;' +
+                    // '{{#new}}' +
+                    '<abbr class="newpage" title="{{mw.recentchanges-label-newpage}}">{{mw.newpageletter}}</abbr> ' +
+                    // '{{/new}}' + 
+                    '{{{rcmessage}}}{{mw.semicolon-separator}} ' +
+                    '{{parsedDate.time}}' +
                     ' <span class="mw-changeslist-separator"></span> ' +
-                    '&lrm;' +
-                    '{{#new}}' +
-                        '<abbr class="newpage" title="{{mw.recentchanges-label-newpage}}">{{mw.newpageletter}}</abbr> ' +
-                    '{{/new}}' + 
-                    '{{{rcmessage}}}' +
-                    ' <span class="mw-changeslist-separator"></span> ' +
-                        '<span dir="ltr" class="mw-plusminus-pos mw-diff-bytes">+{{jsonModel.length}}</span>&lrm; ' +
+                        '<span dir="ltr" class="mw-plusminus-pos mw-diff-bytes">+{{diffBytes}}</span>&lrm; ' +
                     ' <span class="mw-changeslist-separator"></span> &lrm; ' +
                     '{{^isIP}}' + 
                     '<a href="/wiki/User:{{createdByFinal}}"' +
@@ -58,11 +61,11 @@
                         '</span>' +
                     '</span> ' +
                     '<span class="comment comment--without-parentheses">' +
-                        '{{#limitLength}}{{rawContent}}{{/limitLength}}' +
+                        '{{#limitLength}}{{rawContent}}{{renderedContentStripped}}{{/limitLength}}' +
                     '</span>' +
-                '</span></li>' +
-            '{{/data._embedded.doc:posts}}' +
-        '</div>';
+                '</span>' + 
+            '</li>' +
+        '{{/post}}';
     
     /**
      * Get posts/threads from current wiki's Discussions
@@ -124,6 +127,10 @@
         });
     };
 
+    /**
+     * Mustache lambda to Limit the summary string to 100
+     * @return limit length function for Mustache
+     */
     discussrc.limitLength = function() {
         return function(text, render) {
             if (render(text).length > 100)
@@ -133,20 +140,46 @@
     };
 
     /**
+     * Parses a Discussions timestamp to other formats for RC entries
+     * @param {String} epochSecond epochSecond
+     */
+    discussrc.parseDate = function(epochSecond) {
+        var date = new Date(epochSecond * 1000);
+        var hours = date.getHours();
+        hours = ((hours < 10) ? '0' : '') + hours;
+        var mins = date.getMinutes();
+        mins = ((mins < 10) ? '0' : '') + mins;
+        var month = date.getMonth() + 1;
+        month = ((month < 10) ? '0' : '') + month;
+        var day = date.getDate();
+        day = ((day < 10) ? '0' : '') + day;
+        var localDate = '' + date.getFullYear().toString() + month + day;
+        return {
+            mwformat: date.toISOString().replace(/([:T\-]|.000Z)/g, ''),
+            time: hours + ':' + mins,
+            localDate: localDate
+        };
+    }
+
+    /**
      * Constructs the main RC message for article comments, walls and Discussions
      * @param {Post} post post data from API
      */
     discussrc.createRCMessage = function(post) {
+        // Obtain common information
         var username      = post.createdBy.id !== '0' ? post.createdBy.name : post.creatorIp.slice(1),
             threadTitle   = post._embedded.thread[0].title,
             containerType = post._embedded.thread[0].containerType,
             url           = '';
         post.createdByFinal = username;
         
+        // Format based on type of post
         switch (containerType) {
             case 'ARTICLE_COMMENT':
-                threadTitle = post.articleName.title;
+                var threadTitle = post.articleName.title;
                 url = communityBasePath + post.articleName.relativeUrl;
+                url += '?commentId=' + post.id;
+                // Article comment (<page>)
                 return discussrc.i18n.msg('article-comments-rc-comment', 
                     url, threadTitle).parse();
             case 'WALL':
@@ -159,13 +192,119 @@
                     url += '#' + post.id;
                 }
                 var threadLink = '[' + url + ' ' + threadTitle + ']';
+                // <thread> on <user>'s wall
                 return discussrc.i18n.msg('wall-recentchanges-thread-group', 
-                    threadLink, 'Message_Wall:' + wallOwner, wallOwner).parse();
+                    threadLink, 'Message_Wall:' + wallOwner, wallOwner.replace(/_/g, ' ')).parse();
+            case 'FORUM':
+                var boardURL = communityBasePath + '/f?catId=' + post.forumId;
+                url = communityBasePath + '/f/p/' + post.threadId;
+                // anchor for replies
+                if (post.position !== 1) {
+                    url += '/r/' + post.id;
+                }
+                var threadLink = '[' + url + ' ' + threadTitle + '] ';
+                // <thread> on <board> Board
+                return window.dev.i18n._parse(threadLink) + 
+                    discussrc.i18n.msg('forum-recentchanges-new-message',
+                        boardURL, post.forumName).parse();
             default:
                 break;
         }
 
         return containerType + ' | ' + threadTitle + ' | ' + username;
+    };
+
+    discussrc.processPosts = function(postsData, callback) {
+        console.log(postsData);
+        var containerIds = [];
+
+        // Perform some processing
+        postsData._embedded['doc:posts'].forEach(function (post) {
+            var thread = post._embedded.thread[0];
+            if (thread.containerType === 'ARTICLE_COMMENT' &&
+                containerIds.indexOf(thread.containerId) === -1) {
+                containerIds.push(thread.containerId);
+            }
+        });
+        // Get article names
+        discussrc.getArticleNames(containerIds)
+        .then(function (res) {
+            return res.json();
+        })
+        .then(function (articles) {
+            console.log(articles);
+            postsData._embedded['doc:posts'].forEach(function (post) {
+                var thread = post._embedded.thread[0];
+                if (thread.containerType === 'ARTICLE_COMMENT') {
+                    post.articleName = articles.articleNames[thread.containerId];
+                }
+                post.new = post.position === 1;
+                post.isIP = post.createdBy.id === '0';
+                if (post.renderedContent) {
+                    post.renderedContentStripped = post.renderedContent.replace(/<\/?.*?>/g, '');
+                }
+                post.rcmessage = discussrc.createRCMessage(post);
+                post.parsedDate = discussrc.parseDate(post.creationDate.epochSecond);
+                if (post.jsonModel) {
+                    post.diffBytes = post.jsonModel.length.toLocaleString();
+                    if (!post.renderedContentStripped && !post.rawContent) {
+                        var jsonModel = JSON.parse(post.jsonModel).content;
+                        post.renderedContentStripped = jsonModel.length === 0 ? "" : jsonModel.map(function (d) {
+                            return d.type == "paragraph" && d.content ? d.content.map(function (td) {
+                                return td.text || "";
+                            }) : "";
+                        }).join(" ").replace(/  /, " ");
+                    }
+                } else if (post.renderedContent) {
+                    post.diffBytes = post.renderedContent.length.toLocaleString();
+                }
+            });
+
+            callback(postsData._embedded['doc:posts']);
+            // var $elem = $('.mw-special-Recentchanges ul.special')[0];
+            // $($elem).prepend(
+            //     Mustache.render(templates.groupedPosts, {
+            //         limitLength: discussrc.limitLength,
+            //         data: postsData,
+            //         mw: discussrc.msg
+            //     })
+            // );
+        });
+    };
+
+    discussrc.showUngroupedLiveRC = function(posts) {
+        var i = 0;
+
+        $('.special li').each(function () {
+            var mwts = $(this).data('mw-ts').toString(),
+                post = posts[i],
+                today = new Date($(this).parent().prev('h4').text()),
+                previousDay = new Date($(this).parent().next('h4').text());
+
+            while (post && post.parsedDate.mwformat > mwts) {
+                console.log(mwts, post.parsedDate);
+                $(this).before($(Mustache.render(templates.post, {
+                    limitLength: discussrc.limitLength,
+                    post: post,
+                    mw: discussrc.msg
+                })));
+                post = posts[++i];
+            }
+            if ($(this).is(':last-child')) {
+                while (post && post.parsedDate.mwformat <= mwts && new Date(post.creationDate.epochSecond * 1000) >= today) {
+                    console.log(mwts, post.parsedDate);
+                    console.log('last');
+                    console.log($(this).text());
+                    $(this).parent().append($(Mustache.render(templates.post, {
+                        limitLength: discussrc.limitLength,
+                        post: post,
+                        mw: discussrc.msg
+                    })));
+                    post = posts[++i];
+                }
+            }
+            console.log('next day');
+        });
     };
 
     // Load Mustache, i18n.js
@@ -185,43 +324,8 @@
             .then(function(res) { return res.json(); })
             .then(function(postsData) {
                 $.when(msgPromise).then(function() {
-                    console.log(postsData);
-                    var containerIds = [];
-
-                    // Perform some processing
-                    postsData._embedded['doc:posts'].forEach(function(post) {
-                        var thread = post._embedded.thread[0];
-                        if (thread.containerType === 'ARTICLE_COMMENT' && 
-                            containerIds.indexOf(thread.containerId) === -1) {
-                            containerIds.push(thread.containerId);
-                        }
-                    });
-                    // Get article names
-                    discussrc.getArticleNames(containerIds)
-                    .then(function(res) { return res.json(); })
-                    .then(function(articles) {
-                        console.log(articles);
-                        postsData._embedded['doc:posts'].forEach(function (post) {
-                            var thread = post._embedded.thread[0];
-                            if (thread.containerType === 'ARTICLE_COMMENT') {
-                                post.articleName = articles.articleNames[thread.containerId];
-                            }
-                            post.new = post.position === 1;
-                            post.isIP = post.createdBy.id === '0';
-                            post.rcmessage = discussrc.createRCMessage(post);
-                        });
-
-                        var $elem = $('.mw-special-Recentchanges ul.special')[0];
-                        $($elem).prepend(
-                            Mustache.render(templates.groupedPosts, {
-                                limitLength: discussrc.limitLength,
-                                data: postsData,
-                                mw: discussrc.msg
-                            })
-                        );
-                    });
+                    discussrc.processPosts(postsData, discussrc.showUngroupedLiveRC);
                 });
-
             });
         });
     };
