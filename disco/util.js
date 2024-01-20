@@ -39,14 +39,17 @@
 
         if (method.toUpperCase() === 'GET') {
             if (typeof data === 'string') {
+                console.log(1);
                 params = '?' + data;
             }
-            else if (Object.keys(params).length !== 0) {
+            else if (Object.keys(data).length !== 0) {
+                console.log(2);
                 params = '?' + new URLSearchParams(data);
             }
         } else {
             settings.body = data;
         }
+        console.log(settings, params, options);
 
         return fetch(util.servicesURL + path + params, settings);
     };

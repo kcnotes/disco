@@ -42,8 +42,6 @@
      * @param {number} options.page - the pagination position, default 0
      * @param {string} options.pivot - id of the post to pivot from
      * @param {string} options.containerType - @see Disco.util.CONTAINER_TYPE
-     * @param {string} options.since - date since
-     * @param {string} options.until - date until
      * @param {string} options.reported - show reported posts?
      * @param {string} options.sortKey - @see Disco.util.SORT_KEY
      * @param {string} options.responseGroup - 'small' or 'full' post details

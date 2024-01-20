@@ -34,6 +34,14 @@
                 '</div>' +
             '{{/_embedded.doc:forum}}' +
         '</div>';
+    
+    templates.board = 
+        '<div id="disco-discuss-board">' +
+            '{{#_embedded.doc:threads}}' +
+                '<div class="ddss-board">' +
+                '</div>' +
+            '{{/_embedded.doc:forum}}' +
+        '</div>';
 
     Discuss.loadmore = 0;
 
@@ -89,10 +97,20 @@
         }
     }
 
+    Discuss.site = new Disco.Site(mw.config.get('wgCityId'), true);
+
+    Discuss.showBoard = function(forumId) {
+        $('#WikiaMainContent').empty();
+        // console.log(forumId);
+        Discuss.site.listThreads({responseGroup: 'full', forumId: forumId}).then(function(data) {
+            console.log(data);
+            $('#WikiaMainContent').append(Mustache.render(templates.board, data));
+        });
+    };
+
     Discuss.showForums = function() {
         $('#WikiaMainContent').empty();
-        var site = new Disco.Site(mw.config.get('wgCityId'), true);
-        site.listCategories({responseGroup: 'full'}).then(function(data) {
+        Discuss.site.listCategories({responseGroup: 'full'}).then(function(data) {
             var userIds = data._embedded['doc:forum'].map(function(forum) {
                 return forum.latestContribution.author;
             });
@@ -100,7 +118,7 @@
                 return id;
             })
             // Get usernames from IDs
-            site.getUsers(userIds).then(function(users) {
+            Discuss.site.getUsers(userIds).then(function(users) {
                 data._embedded['doc:forum'].forEach(function (forum) {
                     // pluralise thread/s
                     forum.threadsPlural = forum.threadCount === 1 ? 'thread' : 'threads';
@@ -125,6 +143,7 @@
             e.stopPropagation();
             var forumId = $(this).data('forumid');
             console.log(forumId);
+            Discuss.showBoard(forumId);
         });
     }
 

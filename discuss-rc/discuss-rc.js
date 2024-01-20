@@ -1,12 +1,18 @@
 (function () {
-    var discussrc = {};
+    'use strict';
 
-    var SERVICES = 'https://services.fandom.com/discussion/',
+    var discussrc = {
+        api: {}
+    };
+    var api = discussrc.api;
+
+    var SERVICES = 'https://services.fandom.com/',
         config   = mw.config.get([
             'wgCityId',
             'wgVersion',
             'wgServer',
-            'wgScriptPath'
+            'wgScriptPath',
+            'wgUserId'
         ]),
         cityId   = config.wgCityId,
         isUCP    = config.wgVersion !== '1.19.24',
@@ -72,9 +78,9 @@
      * @param {*} type - one of ['threads', 'posts']
      * @param {*} options - params to send to the API
      */
-    discussrc.getDiscussions = function(type, data) {
+    api.getDiscussions = function(type, data) {
         var params = '?' + new URLSearchParams(data);
-        return fetch(SERVICES + cityId + '/' + type + params, {
+        return fetch(SERVICES + 'discussion/' + cityId + '/' + type + params, {
             method: 'GET',
             credentials: 'include'
         });
@@ -96,7 +102,7 @@
     discussrc.msg = {};
     
     // Get MW messages from MediaWiki: pages
-    discussrc.getMessages = function() {
+    api.getMessages = function() {
         return new mw.Api().loadMessagesIfMissing(discussrc.MWMESSAGES).done(function() {
             discussrc.MWMESSAGES.forEach(function(msg) {
                 discussrc.msg[msg] = mw.msg(msg);
@@ -110,7 +116,7 @@
      * @param {Array<String>} containerIds list of container ids for articles
      * @param {Array<String>} userIds list of user IDs
      */
-    discussrc.getArticleNames = function(containerIds, userIds) {
+    api.getArticleNames = function(containerIds, userIds) {
         containerIds = containerIds || [];
         userIds = userIds || [];
         var data = {
@@ -128,6 +134,17 @@
     };
 
     /**
+     * Gets global user preferences, incl. timezone, date preference
+     * @param {String} userid user ID of auth'ed user, does not work otherwise
+     */
+    api.getUserPreferences = function(userid) {
+        return fetch(SERVICES + 'user-preference/' + userid + '/', {
+            method: 'GET',
+            credentials: 'include'
+        });
+    };
+
+    /**
      * Mustache lambda to Limit the summary string to 100
      * @return limit length function for Mustache
      */
@@ -136,29 +153,63 @@
             if (render(text).length > 100)
                 return render(text).substr(0, 100) + '...';
             return render(text);
-        }
+        };
     };
 
     /**
      * Parses a Discussions timestamp to other formats for RC entries
      * @param {String} epochSecond epochSecond
+     * @param {Object} pref preferences dictionary
+     * @param {String} pref.date date structure
+     * @param {String} pref.timecorrection timezone correction, "ZoneInfo|<offset>|<zone-name>"
      */
-    discussrc.parseDate = function(epochSecond) {
+    discussrc.parseDate = function(epochSecond, pref) {
+        switch (pref.date) {
+            case 'mdy':
+                // August 24, 2020
+                break;
+            case 'ymd': 
+                // 2020 August 24
+                break;
+            case 'ISO 8601':
+                // 2020-08-24
+                break;
+            case 'dmy':
+            default:
+                // 22 August 2020
+                break;
+
+        }
         var date = new Date(epochSecond * 1000);
-        var hours = date.getHours();
+        var offset = parseInt(pref.timecorrection.split('|')[1]) * 60 * 1000;
+        var offsetDate = new Date(epochSecond * 1000 + offset);
+        var hours = offsetDate.getUTCHours();
         hours = ((hours < 10) ? '0' : '') + hours;
-        var mins = date.getMinutes();
+        var mins = offsetDate.getUTCMinutes();
         mins = ((mins < 10) ? '0' : '') + mins;
-        var month = date.getMonth() + 1;
+        var month = offsetDate.getUTCMonth() + 1;
         month = ((month < 10) ? '0' : '') + month;
-        var day = date.getDate();
+        var day = offsetDate.getUTCDate();
         day = ((day < 10) ? '0' : '') + day;
-        var localDate = '' + date.getFullYear().toString() + month + day;
+        var localDate = '' + offsetDate.getUTCFullYear().toString() + month + day;
         return {
             mwformat: date.toISOString().replace(/([:T\-]|.000Z)/g, ''),
-            time: hours + ':' + mins,
+            time: hours + ':' + mins + '; ' + localDate,
             localDate: localDate
         };
+    };
+
+    /**
+     * Convert preferences array from API into dictionary
+     * @param {*} preferences preferences object from user-preference API
+     * @return dictionary of global preferences
+     */
+    discussrc.parseGlobalPreferences = function(preferences) {
+        var ret = {};
+        preferences.forEach(function(preference) {
+            ret[preference.name] = preference.value;
+        });
+        return ret;
     }
 
     /**
@@ -170,13 +221,13 @@
         var username      = post.createdBy.id !== '0' ? post.createdBy.name : post.creatorIp.slice(1),
             threadTitle   = post._embedded.thread[0].title,
             containerType = post._embedded.thread[0].containerType,
-            url           = '';
+            url = '', threadLink = '';
         post.createdByFinal = username;
         
         // Format based on type of post
         switch (containerType) {
             case 'ARTICLE_COMMENT':
-                var threadTitle = post.articleName.title;
+                threadTitle = post.articleName.title;
                 url = communityBasePath + post.articleName.relativeUrl;
                 url += '?commentId=' + post.id;
                 // Article comment (<page>)
@@ -191,7 +242,7 @@
                 if (post.position !== 1) {
                     url += '#' + post.id;
                 }
-                var threadLink = '[' + url + ' ' + threadTitle + ']';
+                threadLink = '[' + url + ' ' + threadTitle + ']';
                 // <thread> on <user>'s wall
                 return discussrc.i18n.msg('wall-recentchanges-thread-group', 
                     threadLink, 'Message_Wall:' + wallOwner, wallOwner.replace(/_/g, ' ')).parse();
@@ -202,7 +253,7 @@
                 if (post.position !== 1) {
                     url += '/r/' + post.id;
                 }
-                var threadLink = '[' + url + ' ' + threadTitle + '] ';
+                threadLink = '[' + url + ' ' + threadTitle + '] ';
                 // <thread> on <board> Board
                 return window.dev.i18n._parse(threadLink) + 
                     discussrc.i18n.msg('forum-recentchanges-new-message',
@@ -214,6 +265,12 @@
         return containerType + ' | ' + threadTitle + ' | ' + username;
     };
 
+    /**
+     * Process raw post data and add useful information, such as isIP, 
+     * actual user, 
+     * @param {*} postsData direct posts data from discussion API
+     * @param {Function} callback function that injects parsed post data into RC
+     */
     discussrc.processPosts = function(postsData, callback) {
         console.log(postsData);
         var containerIds = [];
@@ -226,13 +283,19 @@
                 containerIds.push(thread.containerId);
             }
         });
-        // Get article names
-        discussrc.getArticleNames(containerIds)
-        .then(function (res) {
-            return res.json();
-        })
-        .then(function (articles) {
+        // Get article names and global preferences
+        Promise.all([
+            api.getArticleNames(containerIds).then(function(res) {return res.json();}),
+            api.getUserPreferences(config.wgUserId).then(function(res) {return res.json();})
+        ])
+        .then(function (items) {
+            var articles = items[0];
+            var pref = discussrc.parseGlobalPreferences(items[1].globalPreferences);
             console.log(articles);
+            console.log(pref);
+
+            // Extract all required RC information from API results
+            // - new, isIP, rcmessage, parsedDate, comment, diff bytes
             postsData._embedded['doc:posts'].forEach(function (post) {
                 var thread = post._embedded.thread[0];
                 if (thread.containerType === 'ARTICLE_COMMENT') {
@@ -240,11 +303,13 @@
                 }
                 post.new = post.position === 1;
                 post.isIP = post.createdBy.id === '0';
+                post.rcmessage = discussrc.createRCMessage(post);
+                post.parsedDate = discussrc.parseDate(post.creationDate.epochSecond, pref);
+
+                // Present a useful comment, and correct number of bytes
                 if (post.renderedContent) {
                     post.renderedContentStripped = post.renderedContent.replace(/<\/?.*?>/g, '');
                 }
-                post.rcmessage = discussrc.createRCMessage(post);
-                post.parsedDate = discussrc.parseDate(post.creationDate.epochSecond);
                 if (post.jsonModel) {
                     post.diffBytes = post.jsonModel.length.toLocaleString();
                     if (!post.renderedContentStripped && !post.rawContent) {
@@ -259,7 +324,8 @@
                     post.diffBytes = post.renderedContent.length.toLocaleString();
                 }
             });
-
+            
+            // Place requested data
             callback(postsData._embedded['doc:posts']);
             // var $elem = $('.mw-special-Recentchanges ul.special')[0];
             // $($elem).prepend(
@@ -272,6 +338,10 @@
         });
     };
 
+    /**
+     * Show in ungrouped, new RecentChanges
+     * @param {Object} posts Parsed _embedded.doc:posts array
+     */
     discussrc.showUngroupedLiveRC = function(posts) {
         var i = 0;
 
@@ -315,9 +385,9 @@
 
     discussrc.init = function() {
         mw.hook('structuredChangeFilters.ui.initialized').add(function () {
-            var msgPromise = discussrc.getMessages();
+            var msgPromise = api.getMessages();
             // UCP, JS-enabled, ungrouped
-            discussrc.getDiscussions('posts', {
+            api.getDiscussions('posts', {
                 limit: 100,
                 responseGroup: 'small'
             })
